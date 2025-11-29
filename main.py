@@ -1,324 +1,164 @@
-"""
-Main FastAPI Application
-Handles API requests, coordinates quiz solving.
-"""
-
-from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import os
-import time
 import requests
 from dotenv import load_dotenv
 from quiz_solver import QuizSolver
 from prompt_helper import LLMHelper
 import json
-import traceback
 
 load_dotenv()
 
-app = FastAPI(title="TDS LLM Analysis Quiz Solver")
+app = FastAPI()
 
-# Load configuration from .env
-REGISTERED_SECRET = os.getenv("MY_SECRET")
-MY_EMAIL = os.getenv("MY_EMAIL")
-QUIZ_TIMEOUT = int(os.getenv("QUIZ_TIMEOUT", "180"))
-
-if not REGISTERED_SECRET or not MY_EMAIL:
-    raise ValueError("❌ MY_SECRET and MY_EMAIL must be set in .env file")
-
-print(f"\n{'='*60}")
-print(f"✅ Configuration loaded:")
-print(f"   Email: {MY_EMAIL}")
-print(f"   Secret: {REGISTERED_SECRET[:10]}***")
-print(f"   Timeout: {QUIZ_TIMEOUT}s")
-print(f"{'='*60}\n")
-
-# ============================================================================
-# REQUEST/RESPONSE MODELS
-# ============================================================================
+REGISTERED_SECRET = os.getenv("MY_SECRET", "dogeshbai")
+MY_EMAIL = os.getenv("MY_EMAIL", "23f2004078@ds.study.iitm.ac.in")
+SUBMIT_URL = "https://tds-llm-analysis.s-anand.net/submit"
+BASE_URL = "https://tds-llm-analysis.s-anand.net"
 
 class QuizRequest(BaseModel):
-    """Incoming quiz request from testing system"""
     email: str
     secret: str
     url: str
-
-class QuizResponse(BaseModel):
-    """Response to send back"""
-    status: str
-    message: str
-
-# ============================================================================
-# EXCEPTION HANDLERS
-# ============================================================================
+    answer: str = None
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc):
-    """
-    Convert Pydantic validation errors (invalid JSON) to HTTP 400.
-    The project requires HTTP 400 for invalid JSON (not FastAPI's default 422).
-    """
-    return JSONResponse(
-        status_code=400,
-        content={"detail": "Invalid JSON"}
-    )
-
-# ============================================================================
-# API ENDPOINTS
-# ============================================================================
+    return JSONResponse(status_code=400, content={"detail": "Invalid JSON"})
 
 @app.get("/")
 def home():
-    """Health check endpoint"""
-    return {
-        "message": "TDS LLM Analysis Quiz API is running!",
-        "status": "ready"
-    }
+    return {"message": "TDS LLM Project 2 Solver Running!"}
 
-@app.post("/quiz")
-def receive_quiz(request: QuizRequest, background_tasks: BackgroundTasks):
-    """
-    Main endpoint: Receive quiz task and start solving.
-    
-    Flow:
-    1. Verify email and secret
-    2. Return HTTP 200 immediately
-    3. Solve quiz in background (doesn't block response)
-    
-    Expected inputs from testing system:
-    {
-        "email": "student@iitm.ac.in",
-        "secret": "my_secret_123",
-        "url": "https://quiz-page-url"
-    }
-    """
-    
-    print(f"\n{'='*60}")
-    print(f"📨 Received quiz request")
-    print(f"   Email: {request.email}")
-    print(f"   URL: {request.url}")
-    print(f"{'='*60}")
-    
-    # Step 1: Verify secret
-    if request.secret != REGISTERED_SECRET:
-        print(f"❌ Invalid secret: {request.secret[:5]}***")
-        raise HTTPException(status_code=403, detail="Invalid secret")
-    
-    # Step 2: Verify email
-    if request.email != MY_EMAIL:
-        print(f"❌ Email mismatch: {request.email} != {MY_EMAIL}")
-        raise HTTPException(status_code=403, detail="Email mismatch")
-    
-    print(f"✅ Authentication successful")
-    
-    # Step 3: Start solving in background (non-blocking)
-    background_tasks.add_task(
-        solve_quiz_chain,
-        email=request.email,
-        secret=request.secret,
-        quiz_url=request.url,
-        start_time=time.time()
-    )
-    
-    # Step 4: Return 200 immediately
-    return QuizResponse(
-        status="authenticated",
-        message=f"Quiz solving started for {request.url}"
-    )
-
-# ============================================================================
-# QUIZ SOLVING LOGIC
-# ============================================================================
-
-def solve_quiz_chain(email, secret, quiz_url, start_time):
-    """
-    Main quiz solving function (runs in background).
-    
-    Flow:
-    1. Visit quiz page, extract question
-    2. Download any data files linked on page
-    3. Send to LLM for solving
-    4. Extract answer from LLM response
-    5. Submit answer
-    6. If wrong, retry within time limit
-    7. If correct, handle next quiz (if any)
-    """
-    
-    solver = QuizSolver()
-    llm_helper = LLMHelper()
-    current_url = quiz_url
-    quiz_count = 0
-    
+@app.post("/start")
+def start_project():
+    """Start the TDS project by POSTing to /submit with url=/project2"""
     try:
-        # Loop: Keep solving quizzes until completion or timeout
-        while current_url and (time.time() - start_time) < QUIZ_TIMEOUT:
-            quiz_count += 1
-            time_elapsed = time.time() - start_time
-            time_remaining = QUIZ_TIMEOUT - time_elapsed
-            
-            print(f"\n{'='*60}")
-            print(f"📋 QUIZ #{quiz_count}")
-            print(f"   Time: {time_elapsed:.1f}s / {QUIZ_TIMEOUT}s")
-            print(f"   URL: {current_url}")
-            print(f"{'='*60}")
-            
-            # ===== STEP 1: Visit quiz page =====
-            print(f"\n[STEP 1] Visiting quiz page...")
-            try:
-                quiz_data = solver.visit_and_parse_quiz(current_url)
-                question = quiz_data["question"]
-                links = quiz_data["links"]
-                submit_url = quiz_data["submit_url"]
-                
-                print(f"✅ Question extracted:")
-                print(f"   {question[:150]}...")
-                
-            except Exception as e:
-                print(f"❌ Failed to parse quiz: {str(e)}")
-                break
-            
-            # ===== STEP 2: Download data files =====
-            print(f"\n[STEP 2] Downloading data files...")
-            downloaded_data = {}
-            
-            for link_text, link_url in links.items():
-                # Only download actual files (not navigation links)
-                if any(ext in link_url.lower() for ext in [".pdf", ".csv", ".json", ".xlsx"]):
-                    try:
-                        file_data = solver.download_file(link_url)
-                        
-                        # If PDF, extract text
-                        if ".pdf" in link_url.lower() and file_data:
-                            file_data = solver.extract_text_from_pdf(file_data)
-                        
-                        if file_data:
-                            # Truncate to avoid token limits
-                            if isinstance(file_data, str) and len(file_data) > 5000:
-                                file_data = file_data[:5000] + "\n[...content truncated...]"
-                            
-                            downloaded_data[link_text] = file_data
-                            print(f"✅ Downloaded: {link_text}")
-                    
-                    except Exception as e:
-                        print(f"⚠️ Could not download {link_text}: {str(e)}")
-                        
-            # ===== STEP 3: Send to LLM for solving =====
-            print(f"\n[STEP 3] Sending to LLM for solving...")
-
-            # If this is the entry /project2 page, just send a fixed answer
-            if "/project2" in current_url and quiz_count == 1:
-                answer = "start"  # any non-empty string works
-                print(f"✅ Using fixed answer for entry step: {answer}")
-            else:
-                try:
-                    answer = llm_helper.solve_quiz(
-                        question_text=question,
-                        available_data=downloaded_data,
-                        links=links
-                    )
-                    print(f"✅ LLM provided answer: {answer}")
-                except Exception as e:
-                    print(f"❌ LLM solving failed: {str(e)}")
-                    break
-
-            # ===== STEP 3: Send to LLM for solving =====
-            print(f"\n[STEP 3] Sending to LLM for solving...")
-            try:
-                answer = llm_helper.solve_quiz(
-                    question_text=question,
-                    available_data=downloaded_data,
-                    links=links
-                )
-                print(f"✅ LLM provided answer: {answer}")
-            
-            except Exception as e:
-                print(f"❌ LLM solving failed: {str(e)}")
-                break
-            
-            # ===== STEP 4: Submit answer =====
-            print(f"\n[STEP 4] Submitting answer...")
-            if not submit_url:
-                print(f"❌ No submit URL found!")
-                break
-            
-            try:
-                submission_payload = {
-                    "email": email,
-                    "secret": secret,
-                    "url": current_url,
-                    "answer": answer
-                }
-                
-                print(f"   POST to: {submit_url}")
-                print(f"   Payload: {json.dumps(submission_payload, indent=2)[:200]}...")
-                
-                response = requests.post(submit_url, json=submission_payload, timeout=10)
-                response.raise_for_status()
-                result = response.json()
-                
-                print(f"   Response: {result}")
-            
-            except Exception as e:
-                print(f"❌ Submission failed: {str(e)}")
-                break
-            
-            # ===== STEP 5: Handle response =====
-            print(f"\n[STEP 5] Processing response...")
-            
-            if result.get("correct"):
-                print(f"✅ CORRECT! Answer was accepted.")
-                
-                # Check if there's a next quiz
-                next_url = result.get("url")
-                if next_url:
-                    print(f"📍 Next quiz: {next_url}")
-                    current_url = next_url
-                else:
-                    print(f"🎉 Quiz chain complete! No more quizzes.")
-                    current_url = None
-            
-            else:
-                print(f"❌ INCORRECT. Reason: {result.get('reason', 'Unknown')}")
-                
-                # Option 1: Try next quiz if provided
-                next_url = result.get("url")
-                if next_url and time_remaining > 30:
-                    print(f"📍 Skipping to next quiz: {next_url}")
-                    current_url = next_url
-                
-                # Option 2: Retry current quiz (would need better logic here)
-                else:
-                    print(f"⏱️ Time running low or no next quiz. Stopping.")
-                    current_url = None
+        payload = {
+            "email": MY_EMAIL,
+            "secret": REGISTERED_SECRET,
+            "url": "/project2",
+            "answer": "start"
+        }
         
-        # === END OF LOOP ===
+        response = requests.post(SUBMIT_URL, json=payload, timeout=10)
+        result = response.json()
+        
         print(f"\n{'='*60}")
-        print(f"🏁 Quiz chain ended")
-        print(f"   Total time: {time.time() - start_time:.1f}s / {QUIZ_TIMEOUT}s")
-        print(f"   Quizzes solved: {quiz_count}")
-        print(f"{'='*60}\n")
+        print("🚀 Starting TDS Project 2")
+        print(f"{'='*60}")
+        print(f"Response: {result}")
+        
+        # If there's a next URL, start solving it
+        if result.get("url"):
+            next_url = result["url"]
+            if not next_url.startswith("http"):
+                next_url = BASE_URL + next_url
+            
+            print(f"\n📍 First task URL: {next_url}")
+            return {
+                "status": "started",
+                "first_task_url": next_url,
+                "message": "Project started. Visit the first task URL to begin."
+            }
+        
+        return result
     
     except Exception as e:
-        print(f"\n❌ FATAL ERROR: {str(e)}")
-        print(traceback.format_exc())
+        return {"error": str(e)}
+
+@app.post("/solve")
+def solve_step(request: QuizRequest):
+    """Solve a single step of the project"""
     
-    finally:
-        # Always cleanup
-        try:
-            solver.close_browser()
-        except:
-            pass
+    # Verify credentials
+    if request.secret != REGISTERED_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+    if request.email != MY_EMAIL:
+        raise HTTPException(status_code=403, detail="Email mismatch")
+    
+    try:
+        print(f"\n{'='*60}")
+        print(f"🔍 Solving: {request.url}")
+        print(f"{'='*60}")
+        
+        # Step 1: Visit and parse the task page
+        solver = QuizSolver()
+        quiz_data = solver.visit_and_parse_quiz(request.url)
+        
+        print(f"\n📋 Task found:")
+        print(f"{quiz_data['question'][:300]}...")
+        
+        # Step 2: Use LLM to understand and solve
+        llm_helper = LLMHelper()
+        
+        task_interpretation = llm_helper.interpret_question(quiz_data['question'])
+        print(f"\n💡 Task: {task_interpretation}")
+        
+        solution_code = llm_helper.generate_solution_code(
+            quiz_data['question'], 
+            task_interpretation, 
+            quiz_data['links']
+        )
+        print(f"\n🔧 Generated solution code")
+        
+        # Step 3: Execute the solution
+        answer = execute_solution(solution_code, quiz_data['links'], quiz_data['question'])
+        print(f"\n✅ Answer: {answer}")
+        
+        # Step 4: Submit the answer
+        submission_payload = {
+            "email": request.email,
+            "secret": request.secret,
+            "url": request.url,
+            "answer": str(answer)
+        }
+        
+        response = requests.post(SUBMIT_URL, json=submission_payload, timeout=10)
+        result = response.json()
+        
+        print(f"\n📊 Server response:")
+        print(f"  - Correct: {result.get('correct')}")
+        if result.get('reason'):
+            print(f"  - Reason: {result.get('reason')}")
+        
+        # Step 5: Check if there's a next task
+        if result.get('url'):
+            next_url = result['url']
+            if not next_url.startswith("http"):
+                next_url = BASE_URL + next_url
+            
+            print(f"\n🔗 Next task: {next_url}")
+            result['next_task_url'] = next_url
+        else:
+            print(f"\n{'='*60}")
+            print("✨ All tasks completed!")
+            print(f"{'='*60}")
+        
+        solver.close_browser()
+        return result
+    
+    except Exception as e:
+        print(f"\n❌ Error: {str(e)}")
+        return {"error": str(e), "status": "failed"}
 
-# ============================================================================
-# RUN THE SERVER
-# ============================================================================
-
-if __name__ == "__main__":
-    print(f"\n{'='*60}")
-    print(f"🚀 Starting TDS LLM Analysis Quiz API")
-    print(f"{'='*60}\n")
-    print(f"Run with:")
-    print(f"  uvicorn main.py --reload --host 0.0.0.0 --port 8000")
-    print()
+def execute_solution(code, links, question):
+    """Safely execute generated solution code"""
+    try:
+        safe_dict = {
+            "requests": requests,
+            "json": json,
+            "links": links,
+            "question": question,
+            "__builtins__": {}
+        }
+        
+        exec(code, safe_dict)
+        answer = safe_dict.get("answer", None)
+        return answer
+    
+    except Exception as e:
+        print(f"Error executing code: {str(e)}")
+        return None
