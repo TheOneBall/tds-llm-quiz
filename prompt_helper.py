@@ -19,7 +19,7 @@ class LLMHelper:
             raise ValueError("❌ OPENAI_API_KEY not found in .env file")
         
         self.client = OpenAI(api_key=api_key)
-        self.model = os.getenv("LLM_MODEL", "gpt-4-turbo")
+        self.model = os.getenv("LLM_MODEL", "gpt-5-nano")
         self.temperature = float(os.getenv("LLM_TEMPERATURE", "0.3"))
         
         print(f"✅ LLM initialized: {self.model}")
