@@ -1,11 +1,6 @@
 """
 Quiz Solver Module
-
-Handles:
-1. Visiting quiz pages with browser
-2. Parsing HTML to extract questions
-3. Downloading linked files and data
-4. Extracting submit URLs
+Handles browser automation and data extraction.
 """
 
 from playwright.sync_api import sync_playwright
@@ -16,17 +11,15 @@ from io import BytesIO
 
 class QuizSolver:
     def __init__(self):
-        """Initialize browser state variables"""
+        """Initialize quiz solver"""
         self.browser = None
         self.context = None
         self.playwright = None
     
     def init_browser(self):
         """
-        Initialize Playwright browser for JavaScript rendering.
-        
-        Why: Quiz pages use JavaScript to render content.
-        Playwright executes JavaScript and gives us the rendered HTML.
+        Initialize headless browser.
+        Headless = no GUI, runs in background.
         """
         try:
             print("  🔧 Starting Playwright...")
@@ -39,13 +32,13 @@ class QuizSolver:
             self.context = self.browser.new_context()
             
             print("  ✅ Browser ready!")
-            
+        
         except Exception as e:
             print(f"  ❌ Browser init failed: {e}")
             raise
     
     def close_browser(self):
-        """Close browser and free up resources"""
+        """Cleanup: close browser gracefully"""
         try:
             if self.context:
                 self.context.close()
@@ -53,21 +46,19 @@ class QuizSolver:
                 self.browser.close()
             if self.playwright:
                 self.playwright.stop()
+            print("  ✅ Browser closed")
         except Exception as e:
             print(f"  ⚠️ Close error: {e}")
     
     def visit_and_parse_quiz(self, quiz_url):
         """
-        Visit quiz page and extract:
-        1. The question text
-        2. Links to data files
-        3. The submit URL where we send answers
+        Visit quiz page (with JavaScript rendering) and extract:
+        - Question text
+        - Download links
+        - Submit URL
         
         Returns:
-            Dictionary with:
-            - question: The quiz question text
-            - links: Dictionary of {text: url} for all links on page
-            - submit_url: Where to POST our answer
+            dict: {"question": str, "links": dict, "submit_url": str}
         """
         if not self.browser:
             self.init_browser()
@@ -77,19 +68,18 @@ class QuizSolver:
             page = self.context.new_page()
             
             print(f"  📍 Navigating to: {quiz_url}")
-            # wait_until="networkidle" means wait until network is idle (all resources loaded)
+            # wait_until="networkidle" = wait for page to fully load
             page.goto(quiz_url, wait_until="networkidle", timeout=30000)
             
             print(f"  ⏳ Waiting for JavaScript to render...")
-            # Give extra time for dynamic content to load
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(2000)  # Extra wait for any dynamic content
             
             print(f"  📖 Extracting question text...")
-            # Get all visible text from the page
+            # Get ALL text visible on page
             question_text = page.inner_text("body")
             
             print(f"  🔗 Extracting links...")
-            # Find all links on the page
+            # Find all <a> tags
             anchors = page.locator("a").all()
             link_urls = {}
             submit_url = None
@@ -101,17 +91,16 @@ class QuizSolver:
                 if not href:
                     continue
                 
-                # Convert relative URLs to absolute URLs
-                # Example: "/download" becomes "https://example.com/download"
+                # Convert relative URLs to absolute
+                # Example: "/submit" becomes "https://example.com/submit"
                 full_url = urljoin(quiz_url, href)
                 link_urls[text or full_url] = full_url
                 
-                # If link contains "/submit", this is likely our submit endpoint
-                if "/submit" in href and submit_url is None:
+                # If we find a /submit link, that's likely the submit endpoint
+                if "/submit" in href.lower() and submit_url is None:
                     submit_url = full_url
             
-            print(f"  🎯 Extracting submit URL...")
-            # If we didn't find submit URL in links, search in text
+            # Fallback: extract submit URL from text if not found in links
             if submit_url is None:
                 submit_url = self.extract_submit_url(question_text, base_url=quiz_url)
             
@@ -127,74 +116,115 @@ class QuizSolver:
         except Exception as e:
             if page:
                 page.close()
-            raise Exception(f"Error parsing quiz page: {str(e)}")
+            raise Exception(f"❌ Error parsing quiz page: {str(e)}")
     
-    def download_file(self, url):
+    def download_file(self, url, file_type="auto"):
         """
-        Download a file from a URL and return its content.
+        Download a file (PDF, CSV, etc.) from URL.
         
         Args:
-            url: The URL to download from
+            url (str): URL to download from
+            file_type (str): "pdf", "csv", "json", etc. or "auto" to detect
         
         Returns:
-            The file content (text or bytes)
+            str or dict: File content (text for CSV/JSON, bytes for PDF)
         """
         try:
-            print(f"    📥 Downloading: {url}")
-            response = requests.get(url, timeout=30)
+            print(f"  📥 Downloading: {url}")
+            response = requests.get(url, timeout=15)
             response.raise_for_status()
             
-            # Try to decode as text
-            try:
-                return response.text
-            except:
-                # If not text, return as bytes
+            # Detect file type if needed
+            if file_type == "auto":
+                if ".pdf" in url.lower():
+                    file_type = "pdf"
+                elif ".csv" in url.lower():
+                    file_type = "csv"
+                elif ".json" in url.lower():
+                    file_type = "json"
+                else:
+                    file_type = "text"
+            
+            # Handle based on file type
+            if file_type == "pdf":
+                # For PDF: return raw content
+                print(f"    ✅ PDF downloaded ({len(response.content)} bytes)")
                 return response.content
+            
+            elif file_type == "csv":
+                # For CSV: return as text
+                print(f"    ✅ CSV downloaded")
+                return response.text
+            
+            elif file_type == "json":
+                # For JSON: return as dict
+                print(f"    ✅ JSON downloaded")
+                return response.json()
+            
+            else:
+                # For others: return as text
+                print(f"    ✅ File downloaded ({len(response.text)} chars)")
+                return response.text
         
         except Exception as e:
-            print(f"    ❌ Download failed: {e}")
+            print(f"    ❌ Download failed: {str(e)}")
             return None
     
-    def collect_data_from_links(self, links):
+    def extract_text_from_pdf(self, pdf_content):
         """
-        Download data from all relevant links.
+        Extract text from PDF binary content.
         
-        Only downloads files that look like data:
-        - .pdf, .csv, .xlsx, .json, .txt, .xml
+        Args:
+            pdf_content (bytes): Raw PDF data
         
         Returns:
-            Dictionary of {filename: content}
+            str: Extracted text
         """
-        collected_data = {}
+        try:
+            from PyPDF2 import PdfReader
+            
+            print(f"  📄 Extracting text from PDF...")
+            
+            # Convert bytes to file-like object
+            pdf_file = BytesIO(pdf_content)
+            reader = PdfReader(pdf_file)
+            
+            text = ""
+            for page_num, page in enumerate(reader.pages):
+                page_text = page.extract_text()
+                text += f"\n--- Page {page_num + 1} ---\n{page_text}"
+            
+            print(f"    ✅ Extracted {len(reader.pages)} pages, {len(text)} chars")
+            return text
         
-        data_extensions = ['.pdf', '.csv', '.xlsx', '.json', '.txt', '.xml', '.png', '.jpg']
-        
-        for link_text, link_url in links.items():
-            # Check if URL has a data file extension
-            if any(link_url.lower().endswith(ext) for ext in data_extensions):
-                print(f"  📊 Collecting data from: {link_text}")
-                content = self.download_file(link_url)
-                if content:
-                    collected_data[link_text] = content
-        
-        return collected_data
+        except Exception as e:
+            print(f"    ❌ PDF extraction failed: {str(e)}")
+            return ""
     
     def extract_submit_url(self, text, base_url):
         """
-        Extract the submit URL from page text.
+        Extract submit URL from text content.
+        Looks for URLs containing "submit".
         
-        Looks for URLs in the text and returns:
-        1. URL containing "submit" if found
-        2. Otherwise, the last URL found
+        Args:
+            text (str): Text content
+            base_url (str): Base URL for relative URL resolution
+        
+        Returns:
+            str: Submit URL or None
         """
+        # Find all URLs in text
         url_pattern = r'https?://[^\s\)\"<]+'
         urls = re.findall(url_pattern, text)
         
-        # Look for URL containing "submit"
+        if not urls:
+            return None
+        
+        # Prefer URL containing "submit"
         for url in reversed(urls):
             if "submit" in url.lower():
                 return url
         
-        # Return last URL if no submit URL found
+        # Otherwise return last URL
         return urls[-1] if urls else None
 
