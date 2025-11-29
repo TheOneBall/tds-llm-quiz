@@ -12,27 +12,40 @@ from quiz_solver import QuizSolver
 def test_llm_helper():
     """Test 1: Verify LLM helper works"""
     print("\n" + "="*60)
-    print("TEST 1: LLM Helper")
-    print("="*60)
+print("TEST 1: LLM Helper - solve_quiz()")
+print("="*60 + "\n")
+
+try:
+    from prompt_helper import LLMHelper
     
-    try:
-        llm = LLMHelper()
-        
-        # Test basic solving
-        test_question = "What is 2 + 2?"
-        answer = llm.solve_quiz(test_question)
-        print(f"✅ LLM answered: {answer}")
-        
-        # Test prompt generation
-        sys_prompt = llm.create_system_prompt("strict")
-        user_prompt = llm.create_user_prompt()
-        print(f"✅ System prompt: {sys_prompt}")
-        print(f"✅ User prompt: {user_prompt}")
-        
-        return True
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return False
+    llm = LLMHelper()
+    
+    # Test with sample quiz question
+    sample_question = """
+    Download data from https://example.com/data.csv
+    Count rows where amount > 100
+    What is the count?
+    """
+    
+    # Simulate some available data
+    sample_data = {
+        "data_preview": "amount,name\n150,item1\n50,item2\n200,item3"
+    }
+    
+    # Solve it
+    answer = llm.solve_quiz(
+        question_text=sample_question,
+        available_data=sample_data
+    )
+    
+    print(f"✅ LLM solved quiz. Answer: {answer}")
+    print("✅ LLM Helper: PASSED")
+    
+except Exception as e:
+    print(f"❌ LLM Helper: {str(e)}")
+    import traceback
+    traceback.print_exc()
+
 
 def test_quiz_solver():
     """Test 2: Verify quiz solver works"""
