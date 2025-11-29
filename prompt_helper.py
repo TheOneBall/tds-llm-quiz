@@ -60,7 +60,7 @@ Important:
 
         # Remove markdown code fences if present
         if code.startswith("```"):
-            parts = code.split("```
+            parts = code.split("```")
             if len(parts) >= 2:
                 code = parts[1]
             else:
