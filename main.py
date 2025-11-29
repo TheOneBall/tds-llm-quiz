@@ -203,7 +203,26 @@ def solve_quiz_chain(email, secret, quiz_url, start_time):
                     
                     except Exception as e:
                         print(f"⚠️ Could not download {link_text}: {str(e)}")
-            
+                        
+            # ===== STEP 3: Send to LLM for solving =====
+            print(f"\n[STEP 3] Sending to LLM for solving...")
+
+            # If this is the entry /project2 page, just send a fixed answer
+            if "/project2" in current_url and quiz_count == 1:
+                answer = "start"  # any non-empty string works
+                print(f"✅ Using fixed answer for entry step: {answer}")
+            else:
+                try:
+                    answer = llm_helper.solve_quiz(
+                        question_text=question,
+                        available_data=downloaded_data,
+                        links=links
+                    )
+                    print(f"✅ LLM provided answer: {answer}")
+                except Exception as e:
+                    print(f"❌ LLM solving failed: {str(e)}")
+                    break
+
             # ===== STEP 3: Send to LLM for solving =====
             print(f"\n[STEP 3] Sending to LLM for solving...")
             try:

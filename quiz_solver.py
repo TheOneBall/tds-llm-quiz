@@ -1,4 +1,3 @@
-from playwright.sync_api import sync_playwright
 from urllib.parse import urljoin
 import re
 import requests
@@ -11,23 +10,6 @@ class QuizSolver:
         self.browser = None
         self.context = None
         self.playwright = None
-
-    def init_browser(self):
-        """Initialize browser - SYNCHRONOUS (no async/await)"""
-        try:
-            print("  🔧 Starting Playwright...")
-            self.playwright = sync_playwright().start()
-
-            print("  🌐 Launching browser...")
-            self.browser = self.playwright.chromium.launch(headless=True)
-
-            print("  📄 Creating context...")
-            self.context = self.browser.new_context()
-
-            print("  ✅ Browser ready!")
-        except Exception as e:
-            print(f"  ❌ Browser init failed: {e}")
-            raise
 
     def close_browser(self):
         """Close browser and cleanup"""
@@ -47,71 +29,93 @@ class QuizSolver:
         Visit quiz URL and parse the question.
         Returns: {question, links, submit_url}
         """
-        if not self.browser:
-            self.init_browser()
+        import requests
+from urllib.parse import urljoin
+import re
 
-        page = None
-        try:
-            page = self.context.new_page()
+class QuizSolver:
+    def __init__(self):
+        pass  # no browser now
 
-            print(f"  📍 Navigating to: {quiz_url}")
-            page.goto(quiz_url, wait_until="networkidle", timeout=30000)
+    def close_browser(self):
+        print("  ✅ (No browser to close)")
 
-            print(f"  ⏳ Waiting for JavaScript to render...")
-            page.wait_for_timeout(2000)
+    def visit_and_parse_quiz(self, quiz_url):
+        """
+        Visit quiz URL and parse the question using requests only.
+        Returns: {question, links, submit_url}
+        """
+        print(f"  🌐 Fetching: {quiz_url}")
+        resp = requests.get(quiz_url, timeout=15)
+        resp.raise_for_status()
+        html = resp.text
 
-            print(f"  📖 Extracting question text...")
-            question_text = page.inner_text("body")
+        # Very simple “question” = body text
+        question_text = html
 
-            print(f"  🔗 Extracting links...")
-            anchors = page.locator("a").all()
-            link_urls = {}
-            submit_url = None
+        # Extract all href links
+        links = {}
+        for match in re.finditer(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html, re.I | re.S):
+            href = match.group(1)
+            text = re.sub(r"\s+", " ", match.group(2)).strip()
+            full_url = urljoin(quiz_url, href)
+            links[text or full_url] = full_url
 
-            for link in anchors:
-                href = link.get_attribute("href")
-                text = (link.inner_text() or "").strip()
-                if not href:
-                    continue
+        # Fallback: also parse text for absolute URLs
+        url_pattern = r'https?://[^\s)"<]+'
+        text_urls = re.findall(url_pattern, html)
+        for u in text_urls:
+            links.setdefault(u, u)
 
-                full_url = urljoin(quiz_url, href)
-                link_urls[text or full_url] = full_url
+        # Detect submit URL
+        submit_url = None
+        for t, u in links.items():
+            if "submit" in u.lower():
+                submit_url = u
+                break
+        if submit_url is None:
+            # fallback: last URL with "submit" in text
+            for u in reversed(text_urls):
+                if "submit" in u.lower():
+                    submit_url = u
+                    break
+        if submit_url is None and text_urls:
+            submit_url = text_urls[-1]
 
-                if "/submit" in href and submit_url is None:
-                    submit_url = full_url
+        print(f"✅ Question (first line): {question_text.splitlines()[0][:80]}...")
+        print(f"✅ Links: {links}")
+        print(f"✅ Submit URL: {submit_url}")
 
-            print(f"  🎯 Detecting submit URL (fallback if needed)...")
-            if submit_url is None:
-                submit_url = self.extract_submit_url_from_text(question_text)
+        return {
+            "question": question_text.strip(),
+            "links": links,
+            "submit_url": submit_url,
+        }
 
-            page.close()
-            page = None
-
-            print(f"✅ Question: {question_text.splitlines()[0][:80]}...")
-            print(f"✅ Links: {link_urls}")
-            print(f"✅ Submit URL: {submit_url}")
-
-            return {
-                "question": question_text.strip(),
-                "links": link_urls,
-                "submit_url": submit_url,
-            }
-
-        except Exception as e:
-            if page:
-                page.close()
-            raise Exception(f"Error parsing quiz page: {str(e)}")
 
     def extract_submit_url_from_text(self, text):
         """Extract submit URL from page content as fallback"""
-        url_pattern = r'https?://[^\s\)\"<]+'
-        urls = re.findall(url_pattern, text)
+                # Detect submit URL
+        submit_url = None
+        for t, u in links.items():
+            if "submit" in u.lower():
+                submit_url = u
+                break
 
-        for url in reversed(urls):
-            if "submit" in url.lower():
-                return url
+        if submit_url is None:
+            # fallback: last URL with "submit" in text
+            for u in reversed(text_urls):
+                if "submit" in u.lower():
+                    submit_url = u
+                    break
 
-        return urls[-1] if urls else None
+        # ⭐ Special case: project2 instructions mention fixed submit URL
+        if submit_url is None and "/project2" in quiz_url:
+            submit_url = "https://tds-llm-analysis.s-anand.net/submit"
+
+        if submit_url is None and text_urls:
+            submit_url = text_urls[-1]
+
 
     # Optional helpers used in main.py
     def download_file(self, url):

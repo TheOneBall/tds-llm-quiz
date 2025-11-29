@@ -93,7 +93,7 @@ def test_api():
         payload = {
             "email": "23f2004078@ds.study.iitm.ac.in",
             "secret": "dogeshbai",
-            "url": "https://tds-llm-analysis.s-anand.net/demo"
+            "url": "https://tds-llm-analysis.s-anand.net/project2"
         }
         
         response = requests.post("http://localhost:8000/quiz", json=payload, timeout=5)
