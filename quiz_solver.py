@@ -33,9 +33,14 @@ class QuizSolver:
             
             print("  ✅ Browser ready!")
         
+        print(f"\n[STEP 1] Visiting quiz page...")
+        try:
+            quiz_data = solver.visit_and_parse_quiz(current_url)
+            ...
         except Exception as e:
-            print(f"  ❌ Browser init failed: {e}")
-            raise
+            print(f"❌ Failed to parse quiz: {str(e)}")
+            break
+
     
     def close_browser(self):
         """Cleanup: close browser gracefully"""
